@@ -20,6 +20,8 @@ import java.util.Set;
 
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.time.format.DateTimeFormatter;
+
 @Controller
 public class MvcController {
   
@@ -29,6 +31,9 @@ public class MvcController {
 
   // Client to get crypto price
   private CryptoPriceClient cryptoPriceClient;
+
+  //new addition by Benjamin
+  ScheduledTransaction transactionScheduled=null;
 
   // Formatter for converting Java Dates to SQL-compatible DATETIME Strings
   private static java.text.SimpleDateFormat SQL_DATETIME_FORMATTER = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
@@ -42,6 +47,7 @@ public class MvcController {
   private final static int MAX_REVERSABLE_TRANSACTIONS_AGO = 3;
   private final static String HTML_LINE_BREAK = "<br/>";
   public static String TRANSACTION_HISTORY_DEPOSIT_ACTION = "Deposit";
+  public static String TRANSACTION_HISTORY_INTEREST_APPLIED = "Interest";
   public static String TRANSACTION_HISTORY_WITHDRAW_ACTION = "Withdraw";
   public static String TRANSACTION_HISTORY_TRANSFER_SEND_ACTION = "TransferSend";
   public static String TRANSACTION_HISTORY_TRANSFER_RECEIVE_ACTION = "TransferReceive";
@@ -96,6 +102,7 @@ public class MvcController {
    */
   @GetMapping("/deposit")
 	public String showDepositForm(Model model) {
+    checkScheculedTranscation();
     User user = new User();
 		model.addAttribute("user", user);
 		return "deposit_form";
@@ -111,6 +118,7 @@ public class MvcController {
    */
   @GetMapping("/withdraw")
 	public String showWithdrawForm(Model model) {
+    checkScheculedTranscation();
     User user = new User();
 		model.addAttribute("user", user);
 		return "withdraw_form";
@@ -126,6 +134,7 @@ public class MvcController {
    */
   @GetMapping("/dispute")
 	public String showDisputeForm(Model model) {
+    checkScheculedTranscation();
     User user = new User();
 		model.addAttribute("user", user);
 		return "dispute_form";
@@ -141,10 +150,20 @@ public class MvcController {
    */
   @GetMapping("/transfer")
 	public String showTransferForm(Model model) {
+    checkScheculedTranscation();
     User user = new User();
 		model.addAttribute("user", user);
 		return "transfer_form";
 	}
+
+  //by benjamin
+  @GetMapping("/scheduletransfer")
+  public String showScheduleTransferForm(Model model){
+    checkScheculedTranscation();
+    User user = new User();
+		model.addAttribute("user", user);
+		return "scheduletransfer_form";
+  }
 
   /**
    * HTML GET request handler that serves the "buycrypto_form" page to the user.
@@ -156,6 +175,7 @@ public class MvcController {
    */
   @GetMapping("/buycrypto")
 	public String showBuyCryptoForm(Model model) {
+    checkScheculedTranscation();
     User user = new User();
     user.setEthPrice(cryptoPriceClient.getCurrentEthValue());
     user.setSolPrice(cryptoPriceClient.getCurrentSolValue());
@@ -163,6 +183,15 @@ public class MvcController {
 		return "buycrypto_form";
 	}
 
+  @GetMapping("/schedulebuycrypto")
+	public String showScheduleBuyCryptoForm(Model model) {
+    checkScheculedTranscation();
+    User user = new User();
+    user.setEthPrice(cryptoPriceClient.getCurrentEthValue());
+    user.setSolPrice(cryptoPriceClient.getCurrentSolValue());
+		model.addAttribute("user", user);
+		return "schedulebuycrypto_form";
+	}
   /**
    * HTML GET request handler that serves the "sellcrypto_form" page to the user.
    * An empty `User` object is also added to the Model as an Attribute to store
@@ -173,11 +202,23 @@ public class MvcController {
    */
   @GetMapping("/sellcrypto")
 	public String showSellCryptoForm(Model model) {
+    checkScheculedTranscation();
     User user = new User();
     user.setEthPrice(cryptoPriceClient.getCurrentEthValue());
     user.setSolPrice(cryptoPriceClient.getCurrentSolValue());
 		model.addAttribute("user", user);
 		return "sellcrypto_form";
+	}
+
+  //by benjamin
+  @GetMapping("/schedulesellcrypto")
+	public String showScheduleSellCryptoForm(Model model) {
+    checkScheculedTranscation();
+    User user = new User();
+    user.setEthPrice(cryptoPriceClient.getCurrentEthValue());
+    user.setSolPrice(cryptoPriceClient.getCurrentSolValue());
+		model.addAttribute("user", user);
+		return "schedulesellcrypto_form";
 	}
 
   //// HELPER METHODS ////
@@ -362,7 +403,152 @@ public class MvcController {
     updateAccountInfo(user);
     return "account_info";
   }
-	
+  
+  //Helper method by benjamin
+  //Done for code reusability
+  public int applyInterestRateToPennyAmount(int pennyAmount){
+    return (int) (pennyAmount * INTEREST_RATE);
+  }
+
+  //Final Project additions
+
+  //Inner class to hold the needed information for completeing a scheduled transcation
+  private class ScheduledTransaction{
+    LocalDateTime timeOfTransaction=null;
+    int amountToBuyTransferOrSell=0;
+    String recurringTransaction=null;
+    User user=null;
+
+    String typeOfTransaction=null;
+    /*types of transactions to support are 
+    -Buying, 
+    -Selling,
+    -Transfers
+    */
+  }
+
+  //Method by Benjamin
+
+  //This method is used to check if a scheduled transaction needs to take place
+  //if so it is completed and reset for a next scheduled transaction
+  public void checkScheculedTranscation(){
+
+    //If we support multiple transactions, check the length of the list 
+    if (transactionScheduled != null && transactionScheduled.timeOfTransaction.compareTo(LocalDateTime.now())<=0) {
+
+      //Now we do different operations based on the type of transaction
+      if(transactionScheduled.typeOfTransaction.equals("Transfer")){
+        //Code block for completeing a transfer
+        //mostly following the same operations as a but there are minor tweaks such as the date being changed
+        //Check if the time to transfer is now or was earlier
+
+        User sender=transactionScheduled.user;
+          
+        // creates new user for recipient
+        User recipient = new User();
+        String recipientUserID = sender.getTransferRecipientID();
+        String recipientPassword = TestudoBankRepository.getCustomerPassword(jdbcTemplate, recipientUserID);
+        recipient.setUsername(recipientUserID);
+        recipient.setPassword(recipientPassword);
+
+        // sets isTransfer to true for sender and recipient
+        sender.setTransfer(true);
+        recipient.setTransfer(true);
+
+        String time = SQL_DATETIME_FORMATTER.format(convertLocalDateTimeToDate(transactionScheduled.timeOfTransaction));
+
+        sender.setAmountToWithdraw(sender.getAmountToTransfer());
+        submitWithdraw(sender);
+
+        // withdraw transfer amount from sender and deposit into recipient's account
+        recipient.setAmountToDeposit(sender.getAmountToTransfer());
+        submitDeposit(recipient);
+
+        // Inserting transfer into transfer history for both customers
+        TestudoBankRepository.insertRowToTransferLogsTable(jdbcTemplate, sender.getUsername(), recipientUserID, time, transactionScheduled.amountToBuyTransferOrSell);
+        updateAccountInfo(sender);
+
+      }else if(transactionScheduled.typeOfTransaction.equals("Sell")){
+        //Code block for completeing a selling of crypto
+        //mostly following the same operations as normal sell but there are minor tweaks such as the date being changed
+        User tempUser=transactionScheduled.user;
+
+        double cryptoValueInDollars = cryptoPriceClient.getCurrentCryptoValue(tempUser.getWhichCryptoToBuy()) * tempUser.getAmountToSellCrypto();
+        String time = SQL_DATETIME_FORMATTER.format(convertLocalDateTimeToDate(transactionScheduled.timeOfTransaction));
+
+        tempUser.setAmountToDeposit(cryptoValueInDollars);
+
+        tempUser.setCryptoTransaction(true);
+
+        // TODO: I don't like how this is dependent on a string return value. Deposit logic should probably be extracted
+        String depositResponse = submitDeposit(tempUser);
+
+        if (depositResponse.equals("account_info")) {
+          TestudoBankRepository.decreaseCustomerCryptoBalance(jdbcTemplate, tempUser.getUsername(), tempUser.getWhichCryptoToBuy(),tempUser.getAmountToSellCrypto());
+          TestudoBankRepository.insertRowToCryptoLogsTable(jdbcTemplate, tempUser.getUsername(), tempUser.getWhichCryptoToBuy(), CRYPTO_HISTORY_SELL_ACTION, time, tempUser.getAmountToSellCrypto());
+
+          updateAccountInfo(tempUser);
+        }
+
+      }else if(transactionScheduled.typeOfTransaction.equals("Buy")){
+        //Code block for completeing a buy of crypto
+        //mostly following the same operations as normal buy but there are minor tweaks such as the date being changed
+
+        User tempUser=transactionScheduled.user;
+        // calculate how much it will cost to buy currently
+        double costOfCryptoPurchaseInDollars = cryptoPriceClient.getCurrentCryptoValue(tempUser.getWhichCryptoToBuy()) * tempUser.getAmountToBuyCrypto();
+
+        // possible for web scraper to fail and return a negative value, abort if so
+        if (costOfCryptoPurchaseInDollars < 0) {
+          return;
+        }
+
+        String time = SQL_DATETIME_FORMATTER.format(convertLocalDateTimeToDate(transactionScheduled.timeOfTransaction));
+
+        tempUser.setAmountToWithdraw(costOfCryptoPurchaseInDollars);
+        tempUser.setCryptoTransaction(true);
+
+        // TODO: I don't like how this is dependent on a string return value. Withdraw logic should probably be extracted
+        String withdrawResponse = submitWithdraw(tempUser);
+
+        if (withdrawResponse.equals("account_info")) {
+
+          // create an entry in CryptoHoldings table if customer is buying this Crypto for the first time.
+        if (!TestudoBankRepository.getCustomerCryptoBalance(jdbcTemplate, tempUser.getUsername(), tempUser.getWhichCryptoToBuy()).isPresent()) {
+            TestudoBankRepository.initCustomerCryptoBalance(jdbcTemplate, tempUser.getUsername(), tempUser.getWhichCryptoToBuy());
+        } 
+
+        TestudoBankRepository.increaseCustomerCryptoBalance(jdbcTemplate, tempUser.getUsername(), tempUser.getWhichCryptoToBuy(), tempUser.getAmountToBuyCrypto());
+        TestudoBankRepository.insertRowToCryptoLogsTable(jdbcTemplate, tempUser.getUsername(), tempUser.getWhichCryptoToBuy(), CRYPTO_HISTORY_BUY_ACTION, time, tempUser.getAmountToBuyCrypto());
+
+        updateAccountInfo(tempUser);
+      }
+      }
+
+      //Checking if we should requeue transaction or discard since we have finished
+      if(transactionScheduled.recurringTransaction.equals("Daily")){
+        LocalDateTime newDate=transactionScheduled.timeOfTransaction;
+        transactionScheduled.timeOfTransaction=newDate.plusDays(1);
+
+      }else if(transactionScheduled.recurringTransaction.equals("Weekly")){
+        LocalDateTime newDate=transactionScheduled.timeOfTransaction;
+        transactionScheduled.timeOfTransaction=newDate.plusWeeks(1);
+
+      }else if(transactionScheduled.recurringTransaction.equals("Monthly")){
+        LocalDateTime newDate=transactionScheduled.timeOfTransaction;
+        transactionScheduled.timeOfTransaction=newDate.plusMonths(1);
+
+      }else if(transactionScheduled.recurringTransaction.equals("Yearly")){
+        LocalDateTime newDate=transactionScheduled.timeOfTransaction;
+        transactionScheduled.timeOfTransaction=newDate.plusYears(1);
+
+      }else{
+        //Covers the case where recurring was set to Once
+        transactionScheduled=null;
+      }
+    }
+  }
+
   /**
    * HTML POST request handler for the Withdraw Form page.
    * 
@@ -407,7 +593,7 @@ public class MvcController {
     int userWithdrawAmtInPennies = convertDollarsToPennies(userWithdrawAmt); // dollar amounts stored as pennies to avoid floating point errors
     String currentTime = SQL_DATETIME_FORMATTER.format(new java.util.Date()); // use same timestamp for all logs created by this deposit
     int userBalanceInPennies = TestudoBankRepository.getCustomerCashBalanceInPennies(jdbcTemplate, userID);
-    int userOverdraftBalanceInPennies = TestudoBankRepository.getCustomerOverdraftBalanceInPennies(jdbcTemplate, userID);
+    int userOverdraftBalanceInPennies = applyInterestRateToPennyAmount(userBalanceInPennies);
     if (userWithdrawAmtInPennies > userBalanceInPennies) { // if withdraw amount exceeds main balance, withdraw into overdraft with interest fee
       int excessWithdrawAmtInPennies = userWithdrawAmtInPennies - userBalanceInPennies;
       int newOverdraftIncreaseAmtAfterInterestInPennies = (int)(excessWithdrawAmtInPennies * INTEREST_RATE);
@@ -559,10 +745,11 @@ public class MvcController {
    * @param user
    * @return "account_info" page if login successful. Otherwise, redirect to "welcome" page.
    */
+
   @PostMapping("/transfer")
   public String submitTransfer(@ModelAttribute("user") User sender) {
 
-    // checks to see the customer you are transfering to exists
+    // checks to see the customer you are transfering from exists
     if (!TestudoBankRepository.doesCustomerExist(jdbcTemplate, sender.getTransferRecipientID())){
       return "welcome";
     }
@@ -625,6 +812,69 @@ public class MvcController {
     return "account_info";
   }
 
+  //By benjamin
+  @PostMapping("/scheduletransfer")
+  public String submitScheduleTransfer(@ModelAttribute("user") User sender) {
+
+    // checks to see the customer you are transfering from exists
+    if (!TestudoBankRepository.doesCustomerExist(jdbcTemplate, sender.getTransferRecipientID())){
+      return "welcome";
+    }
+
+    String senderUserID = sender.getUsername();
+    String senderPasswordAttempt = sender.getPassword();
+    String senderPassword = TestudoBankRepository.getCustomerPassword(jdbcTemplate, senderUserID);
+
+    // creates new user for recipient
+    User recipient = new User();
+    String recipientUserID = sender.getTransferRecipientID();
+    String recipientPassword = TestudoBankRepository.getCustomerPassword(jdbcTemplate, recipientUserID);
+    recipient.setUsername(recipientUserID);
+    recipient.setPassword(recipientPassword);
+
+    /// Invalid Input/State Handling ///
+
+    // unsuccessful login
+    if (senderPasswordAttempt.equals(senderPassword) == false) {
+      return "welcome";
+    }
+
+    // case where customer already has too many reversals
+    int numOfReversals = TestudoBankRepository.getCustomerNumberOfReversals(jdbcTemplate, senderUserID);
+    if (numOfReversals >= MAX_DISPUTES) {
+      return "welcome";
+    }
+
+    // case where customer tries to send money to themselves
+    if (sender.getTransferRecipientID().equals(senderUserID)){
+      return "welcome";
+    }
+
+    // initialize variables for transfer amount
+    double transferAmount = sender.getAmountToTransfer();
+    int transferAmountInPennies = convertDollarsToPennies(transferAmount);
+  
+    // negative transfer amount is not allowed
+    if (transferAmount < 0) {
+      return "welcome";
+    } 
+  
+    //Setting up a scheduled transacation object then returning to home screen
+
+    transactionScheduled= new ScheduledTransaction();
+    transactionScheduled.amountToBuyTransferOrSell=transferAmountInPennies;
+    transactionScheduled.recurringTransaction=sender.getRecurringTransferStatus();
+    transactionScheduled.typeOfTransaction="Transfer";
+    transactionScheduled.user=sender;
+
+    //Converting string input of date into LocalDateTime
+    DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    LocalDateTime dateTime = LocalDateTime.parse(sender.getWhenToSendTransfer(), formatter);
+    transactionScheduled.timeOfTransaction=dateTime;
+
+    return "welcome";
+  }
+
   /**
    * HTML POST request handler for the Buy Crypto Form page.
    * <p>
@@ -643,6 +893,56 @@ public class MvcController {
    * @param user
    * @return "account_info" page if buy successful. Otherwise, redirect to "welcome" page.
    */
+///////////////////////
+  @PostMapping("/schedulebuycrypto")
+  public String buyScheduleCrypto(@ModelAttribute("user") User user){
+
+    String userID = user.getUsername();
+    String userPasswordAttempt = user.getPassword();
+    String userPassword = TestudoBankRepository.getCustomerPassword(jdbcTemplate, userID);
+
+    //// Invalid Input/State Handling ////
+
+    // unsuccessful login
+    if (!userPasswordAttempt.equals(userPassword)) {
+      return "welcome";
+    }
+
+    // must buy a supported cryptocurrency
+    String cryptoToBuy = user.getWhichCryptoToBuy();
+    if (MvcController.SUPPORTED_CRYPTOCURRENCIES.contains(cryptoToBuy) == false) {
+      return "welcome";
+    }
+
+    // must buy a positive amount
+    double cryptoAmountToBuy = user.getAmountToBuyCrypto();
+    if (cryptoAmountToBuy <= 0) {
+      return "welcome";
+    }
+
+    // cannot buy crypto while in overdraft
+    int userOverdraftBalanceInPennies = TestudoBankRepository.getCustomerOverdraftBalanceInPennies(jdbcTemplate, userID);
+    if (userOverdraftBalanceInPennies > 0) {
+      return "welcome";
+    }
+
+    //Setting up a scheduled transacation object then returning to home screen
+
+    transactionScheduled= new ScheduledTransaction();
+    //transactionScheduled.amountToBuyTransferOrSell=cryptoAmountToSell;
+    transactionScheduled.recurringTransaction=user.getRecurringTransferStatus();
+    transactionScheduled.typeOfTransaction="Buy";
+    transactionScheduled.user=user;
+    
+    //Converting string input of date into LocalDateTime
+    DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    LocalDateTime dateTime = LocalDateTime.parse(user.getWhenToSellCrypto(), formatter);
+    transactionScheduled.timeOfTransaction=dateTime;
+
+    return "welcome";
+  }
+
+
   @PostMapping("/buycrypto")
   public String buyCrypto(@ModelAttribute("user") User user) {
 
@@ -738,6 +1038,7 @@ public class MvcController {
    * @param user
    * @return "account_info" page if sell successful. Otherwise, redirect to "welcome" page.
    */
+
   @PostMapping("/sellcrypto")
   public String sellCrypto(@ModelAttribute("user") User user) {
     String userID = user.getUsername();
@@ -798,6 +1099,63 @@ public class MvcController {
     }
   }
 
+  //by benjamin
+  @PostMapping("/schedulesellcrypto")
+   public String sellScheduleCrypto(@ModelAttribute("user") User user){
+
+    String userID = user.getUsername();
+    String userPasswordAttempt = user.getPassword();
+    String userPassword = TestudoBankRepository.getCustomerPassword(jdbcTemplate, userID);
+
+    //// Invalid Input/State Handling ////
+
+    // unsuccessful login
+    if (!userPasswordAttempt.equals(userPassword)) {
+      return "welcome";
+    }
+
+    // must buy a supported cryptocurrency
+    String cryptoToBuy = user.getWhichCryptoToBuy();
+    if (MvcController.SUPPORTED_CRYPTOCURRENCIES.contains(cryptoToBuy) == false) {
+      return "welcome";
+    }
+
+    // must sell a positive amount
+    double cryptoAmountToSell = user.getAmountToSellCrypto();
+    if (cryptoAmountToSell <= 0) {
+      return "welcome";
+    }
+
+    // possible for user to not have any crypto
+    Optional<Double> cryptoBalance = TestudoBankRepository.getCustomerCryptoBalance(jdbcTemplate, userID, cryptoToBuy);
+    if (!cryptoBalance.isPresent()) {
+      return "welcome";
+    }
+
+    // check if user has required crypto balance
+    // TODO: comparing doubles like this is probably not a good idea
+    if (cryptoBalance.get() < cryptoAmountToSell) {
+      return "welcome";
+    }
+
+    //Setting up a scheduled transacation object then returning to home screen
+
+    transactionScheduled= new ScheduledTransaction();
+    //transactionScheduled.amountToBuyTransferOrSell=cryptoAmountToSell;
+    transactionScheduled.recurringTransaction=user.getRecurringTransferStatus();
+    transactionScheduled.typeOfTransaction="Sell";
+    transactionScheduled.user=user;
+
+    //Converting string input of date into LocalDateTime
+    DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    LocalDateTime dateTime = LocalDateTime.parse(user.getWhenToSellCrypto(), formatter);
+    transactionScheduled.timeOfTransaction=dateTime;
+
+    return "welcome";
+   }
+
+
+
   /**
    * 
    * 
@@ -805,6 +1163,33 @@ public class MvcController {
    * @return "account_info" if interest applied. Otherwise, redirect to "welcome" page.
    */
   public String applyInterest(@ModelAttribute("user") User user) {
+    String userID = user.getUsername();
+    int userBalanceInPennies = TestudoBankRepository.getCustomerCashBalanceInPennies(jdbcTemplate, userID);
+    int userOverdraftBalanceInPennies = TestudoBankRepository.getCustomerOverdraftBalanceInPennies(jdbcTemplate, userID);
+    String currentTime = SQL_DATETIME_FORMATTER.format(new java.util.Date());
+
+    //Getting Deposit in pennies. Multiplying by 100d and dividing by 100d to prevent roundoff errors.
+    int depositInPennies=convertDollarsToPennies((user.getAmountToDeposit()*100d)/100d);
+    
+    if(userOverdraftBalanceInPennies<=0 && depositInPennies >= convertDollarsToPennies(20)){
+      user.setNumDepositsForInterest((user.getNumDepositsForInterest())+1);
+
+      //Now checking if we need to award interest to balance
+      if(user.getNumDepositsForInterest()>=5){
+
+        //updating transaction table
+        int interestInPennies=(int)((BALANCE_INTEREST_RATE*userBalanceInPennies)-userBalanceInPennies);
+
+        //updating tables
+        TestudoBankRepository.increaseCustomerCashBalance(jdbcTemplate, userID, interestInPennies);
+        TestudoBankRepository.insertRowToTransactionHistoryTable(jdbcTemplate, userID, currentTime, TRANSACTION_HISTORY_INTEREST_APPLIED, interestInPennies);
+
+        //updating user fields
+        user.setNumDepositsForInterest(user.getNumDepositsForInterest()-5);
+        
+        return "account_info";
+      }
+    }
 
     return "welcome";
 
